@@ -162,6 +162,9 @@
   #admin small{color:#5a6fa3;font-weight:400}
   .ah{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:linear-gradient(90deg,#0a2a7a,#1f5fd8);color:#fff;box-shadow:0 3px 12px rgba(0,0,0,.25)}
   .ah h2{font-size:21px;margin-right:auto}
+  .pub{margin:10px 20px 0;padding:10px 16px;border-radius:12px;font-size:15px;line-height:1.5}
+  .pub.warn{background:#fff3cd;border:2px solid #ffb300;color:#5c3b00}.pub.okk{background:#e3f8e8;border:2px solid #4caf50;color:#14502a}
+  .pub .btn{margin:0 4px}
   #saved{font-size:13px;opacity:0;transition:.3s;background:rgba(255,255,255,.2);padding:3px 10px;border-radius:12px}
   #saved.show{opacity:1}
   .tabs{display:flex;gap:6px;padding:12px 20px 0;max-width:1400px;margin:auto}
@@ -438,8 +441,47 @@ function load(){
   return hasL?norm(L):DEFAULT();
 }
 let D=load();
-function save(){D.savedAt=Date.now();try{localStorage.setItem(KEY,JSON.stringify(D));}catch(e){toast("Gagal menyimpan: penyimpanan browser penuh/diblokir.");return;}
-  const s=$("#saved"); if(s){s.classList.add("show");clearTimeout(save.t);save.t=setTimeout(()=>s.classList.remove("show"),1500);}}
+function updPub(){const e=$("#pub");if(!e)return;let p=0;try{p=+localStorage.getItem("mopani_pub")||0;}catch(x){}
+  const old=!p||(D.savedAt||0)>p;e.className=old?"pub warn":"pub okk";
+  if(ghReady()){e.innerHTML=old?'<b>⚠️ Perubahan belum dikirim ke GitHub.</b> <button class="btn pri sm" data-act="ghpub">🚀 Publikasikan sekarang</button>'+(ghCfg().auto?' (atau tunggu beberapa detik, otomatis)':''):'<b>✅ Sudah dipublikasikan ke GitHub.</b> Teman-teman melihat versi ini dalam ±1–3 menit.';return;}
+  e.innerHTML=old?'<b>⚠️ Perubahan ini BELUM sampai ke teman-teman.</b> Data tersimpan di browser ini saja. Aktifkan <b>Publikasi Otomatis</b> di tab Pengaturan, atau klik <button class="btn pri sm" data-act="dlhtml">⬇️ Unduh index.html</button> lalu ganti file <b>index.html</b> di GitHub.':'<b>✅ Sudah diunduh.</b> Pastikan file index.html hasil unduhan sudah diunggah/diganti di GitHub.';}
+/* ===================== PUBLIKASI OTOMATIS KE GITHUB ===================== */
+const GHK="mopani_gh_v1";
+function ghCfg(){try{return Object.assign({owner:"",repo:"",branch:"main",token:"",auto:false},JSON.parse(localStorage.getItem(GHK))||{});}catch(e){return {owner:"",repo:"",branch:"main",token:"",auto:false};}}
+function ghSet(c){try{localStorage.setItem(GHK,JSON.stringify(c));}catch(e){}}
+function ghReady(){const c=ghCfg();return !!(c.owner&&c.repo&&c.token);}
+function b64utf8(str){const by=new TextEncoder().encode(str);let bin="";for(let i=0;i<by.length;i+=0x8000)bin+=String.fromCharCode.apply(null,by.subarray(i,i+0x8000));return btoa(bin);}
+let ghBusy=false;
+async function ghPublish(quiet){
+  const c=ghCfg();if(!ghReady()){if(!quiet)toast("Isi dulu Pemilik, Repository, dan Token di Pengaturan.");return false;}
+  if(ghBusy)return false;ghBusy=true;setPubState("Mengirim ke GitHub…");
+  try{
+    const stamp=D.savedAt||Date.now(),url="https://api.github.com/repos/"+encodeURIComponent(c.owner)+"/"+encodeURIComponent(c.repo)+"/contents/data.json",
+      H={"Authorization":"Bearer "+c.token,"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};
+    let sha;const g=await fetch(url+"?ref="+encodeURIComponent(c.branch||"main")+"&t="+Date.now(),{headers:H,cache:"no-store"});
+    if(g.ok){sha=(await g.json()).sha;}else if(g.status!==404){throw new Error(g.status===401?"Token salah/kedaluwarsa (401)":g.status===403?"Token tidak punya izin (403)":g.status===404?"":"Gagal membaca (" + g.status + ")");}
+    const body={message:"Update data MOKOPANI "+new Date().toISOString(),content:b64utf8(JSON.stringify(D)),branch:c.branch||"main"};if(sha)body.sha=sha;
+    const r=await fetch(url,{method:"PUT",headers:Object.assign({"Content-Type":"application/json"},H),body:JSON.stringify(body)});
+    if(!r.ok){let m="";try{m=(await r.json()).message||"";}catch(e){}throw new Error("Gagal mengirim ("+r.status+") "+m);}
+    try{localStorage.setItem("mopani_pub",String(stamp));}catch(e){}
+    if(!quiet)toast("✅ Terkirim ke GitHub. Teman-teman akan melihat perubahan dalam ±1–3 menit.");
+    ghBusy=false;updPub();return true;
+  }catch(e){ghBusy=false;toast("⚠️ Gagal publikasi: "+(e&&e.message?e.message:"periksa koneksi internet")+".");updPub();return false;}
+}
+function setPubState(t){const e=$("#pub");if(e){e.className="pub warn";e.textContent=t;}}
+let ghT;function ghAutoSched(){const c=ghCfg();if(!c.auto||!ghReady())return;clearTimeout(ghT);ghT=setTimeout(()=>ghPublish(true),5000);}
+/* pengunjung: ambil data terbaru dari data.json di GitHub Pages */
+function fetchRemote(){
+  if(!/^https?:$/.test(location.protocol))return;
+  fetch("data.json?t="+Date.now(),{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{
+    if(!j||!Array.isArray(j.menus))return;
+    if((+j.savedAt||0)<(+D.savedAt||0))return;     /* data lokal lebih baru (admin sedang mengedit) */
+    if((+j.savedAt||0)===(+D.savedAt||0)&&D.menus&&JSON.stringify(j.menus)===JSON.stringify(D.menus))return;
+    D=norm(j);renderWelcome();renderLanding();
+  }).catch(()=>{});
+}
+function save(){D.savedAt=Date.now();ghAutoSched();try{localStorage.setItem(KEY,JSON.stringify(D));}catch(e){toast("Gagal menyimpan: penyimpanan browser penuh/diblokir.");return;}
+  updPub();const s=$("#saved"); if(s){s.classList.add("show");clearTimeout(save.t);save.t=setTimeout(()=>s.classList.remove("show"),1500);}}
 
 function normUrl(u){
   u=String(u||"").trim(); if(!u) return "";
@@ -733,9 +775,11 @@ const _H=H; H=async function(s){return _H(s.replace(/^rc(.*)$/,(m,x)=>"rc"+x.rep
 
 function renderPanel(){
   A.innerHTML='<div class="ah"><h2>⚙️ Panel Pengelola MOKOPANi</h2><span id="saved">Tersimpan ✓</span><button class="btn" data-act="view">👁 Lihat Dashboard</button><button class="btn" data-act="logout">Keluar</button></div>'+
+    '<div id="pub"></div>'+
     '<div class="tabs"><button data-act="tab" data-v="menu" class="'+(tab==="menu"?"on":"")+'">📂 Menu &amp; Tautan</button><button data-act="tab" data-v="saran" class="'+(tab==="saran"?"on":"")+'">📬 Saran Masuk'+(getSaran().filter(x=>!x.read).length?'<span class="bd">'+getSaran().filter(x=>!x.read).length+'</span>':'')+'</button><button data-act="tab" data-v="set" class="'+(tab==="set"?"on":"")+'">🛠 Pengaturan</button></div><div id="abody"></div>';
   if(!sel||!D.menus.some(m=>m.id===sel)) sel=D.menus[0]&&D.menus[0].id||null;
   tab==="menu"?renderMenuTab():tab==="saran"?renderSaranTab():renderSetTab();
+  updPub();
 }
 const cur=()=>D.menus.find(m=>m.id===sel);
 function renderMenuTab(){
@@ -824,6 +868,7 @@ function renderSetTab(){
     '<div class="note">Saat opsi otomatis aktif, alamat tautan dikirim ke layanan pihak ketiga (api.microlink.io untuk gambar/tangkapan layar situs; YouTube, Google Drive, atau favicon Google bila relevan). Hasilnya disimpan di perangkat ini. Matikan bila tautan bersifat pribadi, lalu pakai thumbnail “Unggah gambar” atau “Alamat gambar”. Tautan berupa file lokal (mis. gim.html) tidak bisa diambil otomatis, jadi pakai unggah gambar atau emoji.</div>'+
     '<div class="row" style="margin-top:10px"><button class="btn" data-act="reauto">🔄 Muat ulang semua thumbnail otomatis</button></div></div>'+
   '<div class="card"><h3>Keamanan</h3><div class="g3" style="grid-template-columns:1fr 1fr 1fr auto"><div><label class="f">PIN lama</label><input class="in" id="op" type="password" inputmode="numeric" maxlength="8"></div><div><label class="f">PIN baru</label><input class="in" id="np" type="password" inputmode="numeric" maxlength="8"></div><div><label class="f">Ulangi PIN baru</label><input class="in" id="np2" type="password" inputmode="numeric" maxlength="8"></div><button class="btn pri" data-act="chgPin">Ganti PIN</button></div></div>'+
+  '<div class="card"><h3>🚀 Publikasi Otomatis ke GitHub</h3><div class="note">Dengan ini, setiap perubahan menu/tautan Anda bisa langsung dikirim ke GitHub, sehingga link yang sudah dibagikan ikut ter-update <b>tanpa unggah ulang file</b>. Sekali isi saja. <b>Token tersimpan hanya di perangkat ini</b> (tidak ikut file unduhan). Jangan isi token di komputer yang dipakai orang lain.</div><div class="g2"><div><label class="f">Pemilik (username GitHub)</label><input class="in" data-gh="owner" value="'+esc(ghCfg().owner)+'" placeholder="mis. jasrin-nupura"></div><div><label class="f">Nama repository</label><input class="in" data-gh="repo" value="'+esc(ghCfg().repo)+'" placeholder="mis. mokopani"></div><div><label class="f">Branch</label><input class="in" data-gh="branch" value="'+esc(ghCfg().branch)+'" placeholder="main"></div><div><label class="f">Token (Fine-grained, izin Contents: Read and write)</label><input class="in" type="password" data-gh="token" value="'+esc(ghCfg().token)+'" placeholder="github_pat_..." autocomplete="off"></div></div><label><input type="checkbox" data-gh="auto" '+(ghCfg().auto?"checked":"")+'> Publikasikan otomatis beberapa detik setelah setiap perubahan</label><div class="row" style="margin-top:10px"><button class="btn pri" data-act="ghsave">💾 Simpan pengaturan GitHub</button><button class="btn" data-act="ghpub">🚀 Uji &amp; Publikasikan sekarang</button></div><small>Cara membuat token: GitHub → foto profil → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token. Pilih <i>Only select repositories</i> → repository MOKOPANI Anda → Permissions → Repository permissions → <b>Contents: Read and write</b>. Salin token-nya ke kolom di atas.</small></div>'+
   '<div class="card"><h3>Data &amp; Cadangan</h3><div class="note"><b>Penting:</b> pengaturan (tagline, menu, tautan, thumbnail) tersimpan di <b>browser</b>, bukan di file HTML. Agar file yang dibawa ke papan interaktif atau komputer lain sama persis dengan yang Anda lihat di sini, klik <b>Unduh HTML dengan pengaturan ini</b> lalu pakai file hasil unduhan itu. PIN pengelola tidak ikut tersimpan di file, jadi di perangkat baru Anda diminta membuat PIN sendiri.</div><div class="note">Data tersimpan di <b>browser perangkat ini</b>. Agar data yang diinput di laptop tampil di papan interaktif, klik <b>Ekspor</b>, pindahkan file ke papan, lalu <b>Impor</b> di sana (atau input langsung dari papan).</div><div class="row" style="margin-top:12px"><button class="btn ok" data-act="dlhtml">💾 Unduh HTML dengan pengaturan ini</button><button class="btn pri" data-act="export">⬇ Ekspor data (.json)</button><label class="btn" style="cursor:pointer">⬆ Impor data<input type="file" id="imp" accept=".json,application/json" hidden></label><button class="btn bad" data-act="reset">Reset ke bawaan</button></div></div></div>';
 }
 
@@ -875,13 +920,15 @@ A.addEventListener("click",e=>{
     case "export": {
       const blob=new Blob([JSON.stringify(D,null,2)],{type:"application/json"}),u=URL.createObjectURL(blob),x=document.createElement("a");
       x.href=u;x.download="mopani-data-"+new Date().toISOString().slice(0,10)+".json";document.body.appendChild(x);x.click();x.remove();setTimeout(()=>URL.revokeObjectURL(u),1000);} break;
+    case "ghpub": ghPublish(false); break;
+    case "ghsave": {const c=ghCfg();["owner","repo","branch","token"].forEach(k=>{const el=A.querySelector('[data-gh="'+k+'"]');if(el)c[k]=el.value.trim();});c.auto=!!(A.querySelector('[data-gh="auto"]')||{}).checked;c.branch=c.branch||"main";ghSet(c);toast("Pengaturan GitHub disimpan di perangkat ini.");updPub();} break;
     case "dlhtml": {
       save();
       const js=JSON.stringify(D).replace(/</g,"\\u003c").replace(/\u2028/g,"\\u2028").replace(/\u2029/g,"\\u2029");
       const html=SRC.replace(/(<script type="application\/json" id="mopani-embed">)[\s\S]*?(<\/script>)/,(m,a,c)=>a+js+c);
       const blob=new Blob([html],{type:"text/html"}),u=URL.createObjectURL(blob),x=document.createElement("a");
-      x.href=u;x.download="mokopani.html";document.body.appendChild(x);x.click();x.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);
-      toast("File mokopani.html diunduh. Semua pengaturan ikut tersimpan di dalamnya.");} break;
+      x.href=u;x.download="index.html";try{localStorage.setItem("mopani_pub",String(D.savedAt));}catch(e){}updPub();document.body.appendChild(x);x.click();x.remove();setTimeout(()=>URL.revokeObjectURL(u),1500);
+      toast("File index.html diunduh. Unggah/ganti file ini di GitHub agar teman-teman melihat isi terbaru.");} break;
     case "sr_read": {const a=getSaran(),x=a.find(z=>z.id===id);if(x){x.read=!x.read;setSaran(a);renderPanel();}} break;
     case "sr_readall": {const a=getSaran();a.forEach(x=>x.read=true);setSaran(a);renderPanel();} break;
     case "sr_reply": {const a=getSaran(),x=a.find(z=>z.id===id),v=($("#rp_"+id)||{}).value||"";if(x){x.reply=v.trim();x.replyAt=x.reply?new Date().toISOString():"";x.read=true;if(setSaran(a)){renderPanel();toast("Tanggapan tersimpan.");}}} break;
@@ -985,6 +1032,7 @@ document.addEventListener("keydown",e=>{if(e.ctrlKey&&e.shiftKey&&(e.key==="P"||
 renderWelcome();
 renderLanding();
 if(D.startDash&&location.hash!=="#admin")enterApp();
+fetchRemote();
 </script>
 </body>
 </html>
