@@ -843,6 +843,8 @@ function getSaran(){try{const a=JSON.parse(localStorage.getItem("mopani_saran")|
   const r=a.filter(x=>x&&typeof x.s==="string").map(x=>{if(!x.id){x.id=uid();ch=true;}return {id:String(x.id),t:x.t||"",s:x.s,read:!!x.read,reply:String(x.reply||""),replyAt:x.replyAt||""};});
   if(ch)try{localStorage.setItem("mopani_saran",JSON.stringify(r));}catch(e){}
   return r;}catch(e){return [];}}
+function getGone(){try{const g=JSON.parse(localStorage.getItem("mopani_saran_del")||"[]");return new Set(Array.isArray(g)?g:[]);}catch(e){return new Set();}}
+function addGone(ids){try{const g=getGone();ids.forEach(i=>g.add(i));localStorage.setItem("mopani_saran_del",JSON.stringify([...g].slice(-3000)));}catch(e){}}
 function setSaran(a){try{localStorage.setItem("mopani_saran",JSON.stringify(a));return true;}catch(e){toast("Gagal menyimpan: penyimpanan browser penuh/diblokir.");return false;}}
 function parseForm(){return /forms\/d\/e\/([^\/?#]+)\/viewform[^#]*?[?&](entry\.\d+)=/.exec(D.saranForm||"");}
 function formPost(txt){const m=parseForm();if(!m)return;
@@ -856,8 +858,8 @@ async function loadOnline(quiet){const u=(D.saranSheet||"").trim();if(!u){if(!qu
   if(loadingOnline)return;loadingOnline=true;
   try{const r=await fetch(u+(u.includes("?")?"&":"?")+"t="+Date.now(),{cache:"no-store"});if(!r.ok)throw new Error("HTTP "+r.status);
     const rows=parseCsv(await r.text()).slice(1).filter(x=>x.length>=2&&String(x[1]).trim());
-    const a=getSaran(),ids=new Set(a.map(x=>x.id));let n=0;
-    rows.forEach(x=>{const id="g"+hsh(x[0]+"|"+x[1]);if(!ids.has(id)){a.push({id,t:csvTs(x[0]),s:String(x[1]).trim().slice(0,1000),read:false,reply:"",replyAt:""});ids.add(id);n++;}});
+    const a=getSaran(),ids=new Set(a.map(x=>x.id)),gone=getGone();let n=0;
+    rows.forEach(x=>{const id="g"+hsh(x[0]+"|"+x[1]);if(!ids.has(id)&&!gone.has(id)){a.push({id,t:csvTs(x[0]),s:String(x[1]).trim().slice(0,1000),read:false,reply:"",replyAt:""});ids.add(id);n++;}});
     if(n)setSaran(a);loadingOnline=false;
     if(n&&A.classList.contains("open")&&tab==="saran")renderPanel();
     if(!quiet||n)toast(n?"☁️ "+n+" saran baru dimuat dari pengunjung.":"Tidak ada saran baru dari pengunjung.");
@@ -1126,8 +1128,8 @@ A.addEventListener("click",e=>{
     case "sr_read": {const a=getSaran(),x=a.find(z=>z.id===id);if(x){x.read=!x.read;setSaran(a);renderPanel();}} break;
     case "sr_readall": {const a=getSaran();a.forEach(x=>x.read=true);setSaran(a);renderPanel();} break;
     case "sr_reply": {const a=getSaran(),x=a.find(z=>z.id===id),v=($("#rp_"+id)||{}).value||"";if(x){x.reply=v.trim();x.replyAt=x.reply?new Date().toISOString():"";x.read=true;if(setSaran(a)){renderPanel();toast("Tanggapan tersimpan.");}}} break;
-    case "sr_del": ask("Hapus saran ini?",()=>{setSaran(getSaran().filter(z=>z.id!==id));renderPanel();toast("Saran dihapus.");}); break;
-    case "sr_delall": ask("Hapus SEMUA saran yang masuk? Tindakan ini tidak dapat dibatalkan.",()=>{setSaran([]);renderPanel();toast("Semua saran dihapus.");},"Ya, hapus semua"); break;
+    case "sr_del": ask("Hapus saran ini?",()=>{addGone([id]);setSaran(getSaran().filter(z=>z.id!==id));renderPanel();toast("Saran dihapus.");}); break;
+    case "sr_delall": ask("Hapus SEMUA saran yang masuk? Tindakan ini tidak dapat dibatalkan.",()=>{addGone(getSaran().map(z=>z.id));setSaran([]);renderPanel();toast("Semua saran dihapus.");},"Ya, hapus semua"); break;
     case "sr_json": srDownload("saran-mokopani-"+new Date().toISOString().slice(0,10)+".json","application/json",JSON.stringify(getSaran(),null,2)); break;
     case "sr_csv": {
       const q=v=>'"'+String(v==null?"":v).replace(/"/g,'""')+'"',rows=[["Tanggal","Saran","Status dibaca","Tanggapan","Tanggal tanggapan"]].concat(getSaran().sort((a,b)=>String(a.t).localeCompare(String(b.t))).map(x=>[fmtDate(x.t),x.s,x.read?"Sudah":"Belum",x.reply,x.replyAt?fmtDate(x.replyAt):""]));
